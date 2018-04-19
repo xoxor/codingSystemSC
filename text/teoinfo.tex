@@ -1,0 +1,414 @@
+\documentclass[a4paper,11pt]{article}
+\usepackage{microtype}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[italian]{babel}
+\usepackage[english]{varioref}
+\usepackage{lipsum}
+\usepackage{url}
+\usepackage{afterpage}
+\usepackage{emptypage}
+\usepackage{turnstile, amssymb}
+\usepackage{cancel}
+\usepackage{amsthm,amssymb}
+\usepackage{amsmath}
+\usepackage[nottoc]{tocbibind}
+\usepackage{graphicx}
+\usepackage[nowrite,infront,standard]{frontespizio}
+\usepackage{subfig}
+\usepackage[curve]{xypic}
+\usepackage{rotating}
+\usepackage{float}
+
+\newcommand{\Tau}{\mathrm{T}}
+
+\theoremstyle{definition}
+\newtheorem{definition}{Definition}[section]
+\newtheorem{claim}{Claim}[section]
+\newtheorem{proposition}{Proposition}[section]
+\newtheorem{lemma}{Lemma}[section]
+\newtheorem{example}{Example}[section]
+
+\newcommand{\Tao}{\mathcal{T}}
+
+
+\begin{document}
+
+\begin{frontespizio}
+\end{frontespizio}
+
+
+\tableofcontents
+
+\cleardoublepage
+
+\section{Traccia}
+Implementare un sistema capace di prendere in input un file di testo e comprimerlo usando due diverse varianti di Lempel-Ziv come codifica di sorgente, diverse da LZ77 e LZ78. Il testo compresso deve essere mandato su un canale con probabilita' di errore isolata o a raffica e codificato con una qualche codifica di canale. Il lato ricevente attuera' la corrispondente decodifica e decompressione.
+\newline
+\noindent \textbf{Parametri input}:
+\begin{itemize}
+	\item File di testo;
+	\item Codifica di sorgente;
+	\item Codifica di canale;
+	\item Modello di canale (errore a raffica o isolato);
+	\item Probabilita' di errore;
+	\item Numero di stage in caso di codifica concatenata.
+\end{itemize}
+
+\noindent \textbf{Parametri da valutare}:
+\begin{itemize}
+	\item Fattore di compressione;
+	\item Ritardo di compressione end-to-end;
+	\item Errore di decodifica al variare di:
+	\begin{itemize}
+		\item probabilita' di errore sul canale
+		\item modello di errore sul canale;
+		\item codifica di canale;
+		\item numero di stage per canali concatenati. 
+	\end{itemize}
+\end{itemize}
+
+\noindent L'obiettivo del progetto e' quello di mostrare la capacita' di applicare gli schemi studiati e osservare sperimentalmente i risultati teorici appresi durante il corso. 
+
+\clearpage
+
+\section{Progettazione}
+\subsection{Codifica di Sorgente}
+La codifica di sorgente e' la rappresentazione efficiente dei dati generati da una sorgente discreta al fine di trasmetterli su un opportuno canale privo di rumore. Nella realta' un canale che non introduce alcun rumore e' irrealistico, ma grazie ad una codifica di canale e ad i codici correttori di errori si possono ottenere canali senza rumore o buone approssimazioni di essi. 
+Il codice adottato da una sorgente deve essere tale da garantire che il ricevitore distingua senza ambiguita' i messaggi inviati dal trasmettitore a meno di eventuali errori introdotti dal canale di comunicazione. Nel caso in cui si debbano trasmettere messaggi di tipo testo si usano spesso codici in cui ad ogni carattere o simbolo viene associata una sequenza di cifre binarie di lunghezza fissa.
+Noi ad esempio consideriamo testi in codifica ASCII (8 bit per simbolo). 
+\newline \newline
+\noindent Codifica di sorgente e' dunque sinonimo di compressione, e una rappresentazione efficiente dei dati significa proprio trasformarli in una forma ridotta senza che il loro significato venga cambiato. In questo modo bastera' che chi trasmette i dati li comprima prima di farlo e che chi li riceve li decomprima
+prima di leggerli.
+Questo consente una liberazione di banda necessaria sul canale. 
+Ci sono due tipi di compressione:
+\begin{itemize}
+	\item \textbf{Algoritmi di compressione lossless o senza perdita.} Comprimono i dati attraverso un processo senza perdita d'informazione e si basano
+	sulla codifica in forma compatta di sequenze di dati uguali, oppure sulla codifica con un numero ridotto dei bit di dati statisticamente piu' frequenti. Dopo la decodifica il messaggio originale viene ricostruito interamente. Questo tipo di algoritmi sono piu' appropriati per comprimere testi, casi in cui, quindi, non e' consentito perdere neanche un bit dell'informazione di partenza; tuttavia esistono anche algoritmi lossless per la compressione di immagini. Un esempio sono i formati ZIP per i file e GIF, PNG e TIFF per le immagini
+	\item \textbf{Algoritmi di compressione lossy o con perdita (distruttivi).} Comprimono i dati attraverso un processo con perdita d'informazione che sfrutta le ridondanze nell'utilizzo dei dati e non possono assicurare una reversibilita' assoluta.	La parte meno significativa del messaggio viene soppressa in modo irreversibile. Vengono usati per comprimere file multimediali (immagini, audio, video) sfruttando il fatto che l'informazione multimediale puo' essere sottoposta a trasformazioni pur rimanendo comprensibile per l'occhio umano. Un esempio sono i formati JPEG per le immagini, MP3 per il suono e MPEG per le immagini in movimento. In molti casi lo spazio che si riesce a risparmiare effettuando la compressione con algoritmi lossy e' molto maggiore rispetto a quello risparmiato usando algoritmi lossless.
+
+\end{itemize}
+In questo progetto ci siamo occupati di due tecniche di compressione linguistica: compressioni, cioe', che analizzano le proprieta' "strutturali" o "linguistiche" del testo per poterne ridurre le dimensioni. In letteratura sono presenti numerose varianti degli algoritmi di Lempel e Ziv \cite{bookcompression}, noi ci siamo soffermati su due in particolare. Il principio su cui si basano gli algoritmi di questa famiglia e' che possano esistere delle sottostringhe dell'input che si ripetono, e quindi che si possa sostituire ognuna di esse con un puntatore alla posizione in cui questa stessa si e' presentata per la prima volta all'interno del testo. 
+\newline \newline
+\noindent Le varianti degli algoritmi di Lempel e Ziv implementate sono quelle che vanno con i nomi di \textbf{LZW} e \textbf{LZW}.
+\subsubsection{LZW}
+L'idea alla base dell'algoritmo, presentato da Terry Welch nel 1984 \cite{lzw}, e' abbastanza semplice, ossia sfruttare la presenza di ripetizioni all'interno di una stringa in ingresso creando dinamicamente un dizionario. All'inizio il dizionario conterra' solamente la lista dei caratteri dell'alfabeto con cui si desidera operare, aggiungendo a quest'ultimo nuovi elementi man mano che la stringa in ingresso viene esaminata. La cosa piu' interessante di tale algoritmo e' dovuta al fatto che il dizionario non richiede di essere inviato insieme alla codifica ma e' direttamente ricostruibile durante il processo di decodifica. 
+Il flusso dei simboli emessi dalla sorgente verra' suddiviso in frasi di lunghezza variabile, dove ogni frase e' ottenuta estraendo, dalla stringa in input, la sottostringa di lunghezza massima che risulti gia' presente all'interno del dizionario costruito fino a quel punto.
+
+Il processo di codifica si puo' riassumere in tre fasi da ripetere sino alla fine dell'input (previa inizializzazione del dizionario).
+\newline \newline
+\noindent \textbf{Codifica}
+\begin{enumerate}
+	\item Si cerca nel dizionario la piu' lunga sequenza di simboli in ingresso;
+	\item Ci codifica in uscita la sottostringa, utilizzando il corrispettivo valore presente nel dizionario;
+	\item Si aggiunge, all'interno del dizionario, un nuovo valore ottenuto concatenando la sottostringa appena utilizzata con il successivo simbolo emesso dalla sorgente. 
+\end{enumerate}
+
+\noindent Il lato ricevente dovra' ovviamente conoscere l'alfabeto per poter inizializzare il dizionario. Inizialmente il dizionario del decoder, infatti, e' identico a quello dell'encoder (all'inizio del processo di compressione), che conterra' anch'egli solamente voci dei simboli dell'alfabeto. Il decoder comincia il processo di decompressione analizzando la stringa compressa, traducendo e convertendo ogni singolo simbolo e aggiungendolo al dizionario concatenato con il simbolo successivo. 
+
+\subsubsection{LZMW}
+
+LZW e' un metodo di compressione dati adattivo, ma nella realta' e' lento ad adattarsi all'input dal momento che le stringhe del dizionario aumentano la loro lunghezza di un carattere alla volta. L'algoritmo LZMW sviluppato da V. Miller e M. Wegman \cite{lzmw} supera questo problema aggiungendo al dizionario l'indice piu' la frase successiva piuttosto che il carattere successivo. 
+Vediamo lo pseudocodice di questo algoritmo:
+\begin{verbatim}
+Inizializza Diz con tutti i simboli dell'alfabeto A;
+i := 1;
+S' := null;
+while i <= input size
+    k := match piu' lungo di Input[i] in Diz;
+    Output(k);
+    S := stringa k di Diz;
+    i := i+length(S);
+    If la stringa S'S non e' in Diz, aggiungila a Diz;
+    S' := S;
+endwhile;
+\end{verbatim}
+Come possiamo notare dal codice ogni frase aggiunta al dizionario e' la concatenazione di due stringhe: il match precedente (S') e quello corrente (S).
+Questo significa che le frasi nel dizionario possono crescere piu' di un simbolo alla volta e rappresentano, in questo modo, delle unita' piu' "naturali" dell'input.
+Per esempio, nel nostro caso in cui l'input e' un testo in linguaggio naturale le frasi del dizionario tenderanno ad essere parole complete o addirittura combinazione di parole del linguaggio. Cio' implica che il dizionario di LZMW generalmente si adatta all'input piu' velocemente di quello di LZW.
+
+
+\subsection{Codifica di Canale}
+La codifica di canale permette di trasmettere l'informazione emessa dalla sorgente (opportunamente trattata mediante la codifica di sorgente) in maniera affidabile su un canale reale caratterizzato da limitazioni fisiche come ad esempio il rumore. La codifica di canale "trasforma" la sequenza di dati in
+ingresso al canale in una nuova sequenza intrinsecamente piu' robusta agli effetti del rumore. La decodifica di canale effettua, poi, l'operazione inversa in
+uscita dal canale per ricostruire la sequenza originale. 
+
+Il processo di codifica di canale consiste nell'aggiungere bit di ridondanza al messaggio che si vuole trasmettere. In fase di ricezione, la presenza di tali bit consente di rilevare o correggere eventuali errori introdotti nel messaggio dal rumore presente sul canale. Lo svantaggio della codifica di canale e' che si devono trasmettere piu' bit di quanti ne siano effettivamente necessari per rappresentare il messaggio quindi cresce il tempo richiesto per la trasmissione.
+
+Nel nostro lavoro usiamo due diversi codici per proteggere il messaggio dal rumore presente sul canale: a ripetizione e di Hamming. Entrambi fanno parte della categoria dei codici a blocchi lineari. In un codice a blocco $(n,k)$ il messaggio e' diviso in blocchi di $k$ simboli, a cui vengono associate parole di codice formate da $n=k+q$ simboli. Si introducono quindi $q$ bit di ridondanza.
+
+\subsubsection{Codici a Ripetizione}
+I codici a ripetizione sono forse i piu' semplici codici a blocchi. La strategia di codifica consiste nel costruire parole di codice che ripetano n volte il bit di informazione che si vuole trasmettere:
+\begin{gather*}
+0 \rightarrow 000...000 \\
+1 \rightarrow 111...111
+\end{gather*}
+Nei codici a ripetizione si ha: $k=1$, $q=n-1$. Pertanto siamo in presenza di codici $(n,1)$. Questi possono essere usati per correggere errori in fase di decodifica, per farlo possiamo sfruttare una regola di decisione di maggioranza: se una parola non appartiene al codice, la trasformiamo nella parola di codice ad essa piu' vicina assumendo che almeno $\frac{(n+1)}{2}$ bit siano corretti.
+
+
+\subsubsection{Codici di Hamming}
+Un codice di Hamming e' un codice lineare a blocchi per il quale sono verificate le seguenti relazioni:
+\[q=n-k\geq3 \qquad \quad n=2q-1.\]
+e' possibile verificare che, indipendentemente da q, la distanza minima e' fissata e vale: dmin=3. Pertanto un codice di Hamming puo' rilevare due errori o correggere un errore per ogni parola di codice. 
+
+Per la codifica si crea una matrice generatrice G, e la codifica c di p si potra' rappresentare nella forma $C=PG$. Per la rivelazione di errori in fase di decodifica si procede con la costruzione di una matrice di parita' H tale che $CH=(0...0)$ (dove c e' una parola di codice). Se x non e' una parola di codice allora il prodotto $S=XH$ contiene almeno un elemento non nullo e $S$ viene chiamata sindrome. La sindrome puo' essere usata non solo per rivelare gli errori nelle parole di codice ma anche per correggerli.
+
+
+\subsection{Modello di Canale}
+Il canale e' considerato come operatore stocastico che trasforma i simboli in ingresso in simboli diversi in uscita in modo probabilistico.
+Il modello di canale piu' semplice e' quello Simmetrico Binario, in cui si ha un errore isolato con una probabilita' di errore $\alpha$ fissata. Tuttavia molti canali di comunicazione reali hanno un comportamento variabile nel tempo ed il rumore introdotto per la trasmissione di simboli da istante a istante non e' indipendente. I canali con memoria introducono errori a grappolo (burst) cioe' errori concentrati nel tempo.
+\subsubsection{Errore Isolato: Canale Simmetrico Binario}
+Si definisce canale binario simmetrico un canale discreto il cui alfabeto di sorgente e' composto da due simboli $x_1$ e $x_2$, caratterizzati da probabilita' $P(x_1)=p$ e $P(x_1)=1-p$. L'alfabeto di destinazione, inoltre, e' composto da due simboli $y_1$ e $y_2$ e le probabilita' di transizione valgono:
+\begin{gather*}
+P(\frac{y_1}{x_2})=P(\frac{y_2}{x_1}) = \alpha \\
+P(\frac{y_1}{x_1})=P(\frac{y_2}{x_2}) = 1-\alpha
+\end{gather*}
+
+\begin{figure}
+	\centering
+	\includegraphics[width=0.7 \textwidth]{BSC}
+	\caption{Canale Simmetrico Binario. }
+	\label{fig:bsc}
+\end{figure}
+
+In Figura \ref{fig:bsc} si puo' vedere una rappresentazione di un canale simmetrico binario con relativa matrice di probabilita'.
+
+\subsubsection{Errore a Raffica: Modello di Gilbert-Elliott}
+Abbiamo fin qui considerato il caso di errori in trasmissione aventi ciascuno
+probabilita' indipendenti l'uno dallo altro. Consideriamo ora anche il caso in cui gli errori si presentino concentrati in intervalli temporali particolari, ovvero
+il caso in cui si verifichino raffiche di errori (\textbf{burst errors}). Vi sono molti casi in cui questo fenomeno si presenta tipicamente. Ad esempio, nelle trasmissioni wireless.
+
+Per modellare le caratteristiche di errore di un canale wireless tra due stazioni il modello piu' semplice e largamente utilizzato e' il modello di \textit{Gilbert-Elliott} introdotto da E. Gilbert \cite{gilbert} e E. O. Elliott \cite{elliott}. Questo modello di canale discreto con memoria e' rappresentato da una catena di Markov del primo ordine a due stati, stato Good (\textbf{G}) e stato Bad (\textbf{B}). La matrice delle probabilita' di transizione di stato della catena di Markov e' indicata con $P_{GE}$ (Figura \ref{fig:ge1}). Ad ogni transizione di stato e' associata la trasmissione di un simbolo attraverso il canale. Se le probabilita' $p_{GB}$ e $p_{BG}$ sono piccole, la catena di Markov ha la tendenza di rimanere nello stato in cui si trova.
+
+\begin{figure}
+	\centering
+	\includegraphics[width=0.8 \textwidth]{GE1}
+	\caption{Probabilita' di transizione di stato della catena di Markov del modello Gilbert-Elliott. }
+	\label{fig:ge1}
+\end{figure}
+
+Nello stato G la probabilita' di trasmettere un bit errato e' $r_G$, mentre nello stato B e' $r_B$. Allo stato Good e' associato un canale BSC con probabilita' di inversione $r_G$ bassa, mentre allo stato Bad e' associato un canale BSC con probabilita' di inversione $r_B$ alta: $0<r_G<<r_B<0.5$.
+Le matrici di canale dei due BSC, da non confondere con la matrice delle probabilita' di transizione della catena di Markov, si possono vedere in Figura \ref{fig:ge2}.
+
+\begin{figure}
+	\centering
+	\includegraphics[width=0.7 \textwidth]{GE2}
+	\caption{Matrici di canale dei due BSC associati agli stati della catena di Markov del modello Gilbert-Elliott. }
+	\label{fig:ge2}
+\end{figure}
+
+A seconda dei parametri scelti il comportamento del canale varia, e ci sono vari modi di selezionarli sia sperimentalmente che consultando la letteratura. Noi abbiamo selezionato i valori standard per il nostro progetto da uno studio teorico sui canali Wireless \cite{GE} che fissa: $r_G=10^{-4}$, $r_B=10^{-3}$, $p_{GG}=0.995$ e $p_{BB}=0.96$. 
+
+\clearpage
+
+\begin{figure}
+	\centering
+	\includegraphics[width=1 \textwidth]{trasmissione}
+	\caption{Schema di trasmissione completo da sorgente a destinazione. }
+	\label{fig:tras}
+\end{figure}
+
+\clearpage
+
+\section{Implementazione}
+
+Dopo aver studiato le varie fasi che il testo attraversa per passare dal trasmettitore al ricevitore siamo passati nella fase di progettazione, e quindi di scelta delle codifiche di sorgente e di canale e del modello di errore con relativi parametri. Solo a questo punto abbiamo iniziato l'implementazione vera e propria del sistema. 
+
+In Figura \ref{fig:d4} e' mostrato il diagramma UML delle classi di utilita' e delle strutture dati utilizzate. Il flusso di bit in uscita dalla fase di compressione e' stato modellato come un \textbf{BitStream}, una struttura dati realizzata sulla base di un BitSet. Questa realizzazione si risulta molto efficiente al fine di non sprecare spazio memorizzando ogni bit in uscita dalla compressione come un tipo primitivo, ad esempio byte nel migliore dei casi. Inoltre ci aiuta nella manipolazione del flusso, permettendoci di inserire tutti i metodi necessari per agire facilmente sui dati.
+
+\textbf{BitMat} e' una struttura dati ausiliaria creata per motivi di efficienza e, soprattutto, praticita' usata nell'implementazione della codifica di Hamming.
+
+\textbf{Trie} e' un tipo di struttura dati ad albero ordinato usata per rappresentare il dizionario degli algoritmi di compressione. La particolarita' di questa struttura e' che tutti i discendenti di un nodo condividono il prefisso associato a quel nodo.
+\newline\newline
+\noindent In Figura \ref{fig:uml} sono mostrati i diagrammi UML delle classi riguardanti il modello di canale (Figura \ref{fig:d1}), la codifica di canale (Figura \ref{fig:d2}) e la codifica di sorgente (Figura \ref{fig:d3}). Tutte sono state progettate prima ad un livello di astrazione piu' alto, mettendo in comune tutte le similarita' delle varie implementazioni delle codifiche, e poi ognuna di queste e' stata estesa per creare le specializzazioni desiderate.
+
+\begin{figure}
+	\centering
+	\includegraphics[width=0.8 \textwidth]{d4}
+	\caption{Diagramma UML delle classi di utilita' e delle strutture dati utilizzate. }
+	\label{fig:d4}
+\end{figure}
+
+\begin{figure}
+	\centering
+	\subfloat[][\emph{Diagramma UML del modello di canale.}]
+	{\includegraphics[width=.7\textwidth]{d1} \label{fig:d1}} \\
+	\subfloat[][\emph{Diagramma UML della codifica di canale.}]
+	{\includegraphics[width=.7\textwidth]{d2} \label{fig:d2}} \\
+	\subfloat[][\emph{Diagramma UML della codifica di sorgente.}]
+	{\includegraphics[width=.7\textwidth]{d3} \label{fig:d3}}
+	\caption{Diagrammi UML progetto.}
+	\label{fig:uml}	
+\end{figure}
+
+
+
+\clearpage
+
+\section{Valutazioni Sperimentali}
+\subsection{Codifica canale}
+Con codifica di canale si intende l'insieme di tecniche di elaborazione del segnale volte a garantire la corretta trasmissione di un messaggio all'interno di un canale rumoroso che introduce errori nella trasmissione dei dati. In particolare si tratta di tecniche che introducono ridondanza nel flusso informativo, questa viene poi usata per la rivelazione e correzione dell'errore in fase di ricezione.
+
+\subsubsection{Errori di decodifica}
+Un parametro per la valutazione della bonta' di una codifica e' il numero degli errori in fase di decodifica. Questo parametro dipende dalla codifica di canale utilizzata, noi in particolare abbiamo implementato una codifica a ripetizione e una codifica di Hamming. Considerando una codifica a ripetizione, nella Figura \ref{fig:erroririp} possiamo osservare la variazione degli errori di decodifica al variare del fattore di ripetizione in un canale simmetrico binario con probabilita' di errore $\alpha=0.1$. Una probabilita' di errore cosi' alta e' alquanto irrealistica in situazioni comuni ma ci permette di apprezzare l'utilita' della ridondanza in trasmissione. In particolare nella Figura \ref{fig:e1} osserviamo come il numero di errori diminuisce esponenzialmente all'aumentare del fattore di ripetizione nella codifica. La Figura \ref{fig:e2} mostra la stessa considerazione usando pero' una concatenazione di codici a ripetizione a due livelli.
+\newline \newline
+\noindent Consideriamo un canale simmetrico binario con codifica a ripetizione concatenata a due livelli dove l'\textit{outer coder} e l'\textit{inner coder} hanno fattore di ripetizione rispettivamente di 3 e 5. La probabilita' di errore teoricamente e':
+
+\begin{gather}
+P_e^I(R_5) \simeq \binom{5}{3} \alpha^3 = \frac{5!}{3!2!} \alpha^3 = 10 \ \alpha^3 \notag \\
+P_e^O(R_3) \simeq \binom{3}{2} \alpha^2 = \frac{3!}{2!1!} \alpha^2 = 3 \ \alpha^2 \notag \\
+P_e(R_3-R_5) \simeq 3 (10 \alpha^3)^2 = 300 \ \alpha^6
+\end{gather}
+Se usassimo invece un singolo codice a ripetizione con fattore 15 otterremmo:
+
+\begin{equation}
+P_e(R_{15}) \simeq \binom{15}{8} \alpha^8 = \frac{15!}{8!7!} \alpha^8 = 6435 \ \alpha^8
+\end{equation}
+Si deduce che:
+\begin{gather}
+6435 \ \alpha^8 \leq 300 \ \alpha^6 \notag \\
+\alpha^6 \ (6435 \ \alpha^2 - 300 ) \leq 0  \notag \\
+\begin{cases}
+\alpha^6 \leq 0 \Rightarrow \alpha \leq 0 \\
+6435 \ \alpha^2 \leq 300 \Rightarrow \alpha \leq 0.2
+\end{cases}
+\end{gather}
+e' meglio usare $R_{15}$ invece di concatenare un $R_3-R_5$ se $0 \leq \alpha \leq 0.2$. 
+In Figura \ref{fig:confrontoconcat} possiamo osservare un confronto tra codici concatenati a due livelli e i corrispondenti codici singoli con fattore di ripetizione pari al prodotto di quelli concatenati. Nella Figura \ref{fig:c1} viene usata una probabilita' di errore $\alpha=0.1$ e notiamo che gli errori di decodifica sono meno nella corrispondente versione non concatenata. Tuttavia gia' se consideriamo una ridondanza di 15 o 21 bit la differenza non e' poi molta e la versione concatenata reca in se' il vantaggio dell'utilizzo di buffer di dimensioni molto minori rispetto la codifica singola. In Figura \ref{fig:c2} e' stato preso un $\alpha>0.2$, in particolare $\alpha=0.6$; notiamo in questo caso come il numero di errori migliori nel caso di codici concatenati.
+\begin{figure}
+	\centering
+	\subfloat[][\emph{Codifica canale: Ripetizione.} \label{fig:e1}]	{\includegraphics[width=.45\textwidth]{g1}}  \quad
+	\subfloat[][\emph{Codifica canale: Ripetizione Concatenato.} \label{fig:e2}]	{\includegraphics[width=.45\textwidth]{g2}}
+	\caption{Errori di decodifica al variare del fattore di ripetizione con un modello di canale Simmetrico Binario ($\alpha=0.1$).}
+	\label{fig:erroririp}
+\end{figure}
+
+\begin{figure}
+	\centering
+	\subfloat[][\emph{Modello canale: Simmetrico Binario ($\alpha=0.1$).} \label{fig:c1}]	{\includegraphics[width=.8\textwidth]{g3}} \\
+	\subfloat[][\emph{Modello canale: Simmetrico Binario ($\alpha=0.6$).} \label{fig:c2}]	{\includegraphics[width=.8\textwidth]{g4}}
+	\caption{Errori di decodifica al variare dei bit di ripetizione. Confronto tra codificatori singoli e concatenati.}
+	\label{fig:confrontoconcat}
+\end{figure}
+
+\subsection{Modello canale}
+Ai fini sperimentali e' importante agire sul modello di canale in modo da poter testare opportunamente l'efficacia delle codifiche. Esistono svariati modelli in grado di riprodurre errori di trasmissione in modo piu' o meno fedele ai canali reali. Come anticipato, nel nostro lavoro sono stati implementati due modelli molto utilizzati al livello teorico.
+
+In un canale simmetrico binario senza memoria la probabilita' di trasmettere il simbolo errato e' uguale sia quando nel caso del valore 0 sia nel caso del valore 1 $(p01=p10)$. Essendo senza memoria non c'e' dipendenza statistica dal bit precedente; modelli di questo tipo sono detti Independent Channel Model. All'atto pratico questo modello si descrive con il parametro $\alpha=p01=p10$ che rappresenta la probabilita' di errore del canale (o probabilita' di crossover). Pur essendo molto utilizzati ai fini analitici, il modello appena descritto e' fin troppo semplicistico. Molti canali di comunicazione reali hanno un comportamento variabile nel tempo ed il rumore introdotto per la trasmissione di simboli da istante a istante non e' indipendente. Nella realta' gli errori occorrono a grappolo (burst) cioe' concentrati nel tempo essendovi correlazione fra bit consecutivi. Il modello di Gilber-Elliott tiene conto di questa correlazione.
+
+
+\subsubsection{Errori di decodifica}
+In questa fase sperimentale si e' deciso di porre l'attenzione sul modello di canale: al contrario della sezione precedente, qui a variare sono il modello di canale e i corrispettivi parametri, mentre la codifica di canale si mantiene fissa in ogni simulazione.
+In dettaglio, si vuole confrontare il comportamento delle codifiche $R3$ ed $H(7,4)$ sottoponendole a diversi modelli di canali.  Fra i parametri di valutazione si ricorre al numero di errori di decodifica, che meglio si esprime con la misura di Bit Error Ratio (BER):
+\[BER=\frac{numero di bit errati}{numero di bit trasmessi}\]
+I bit trasmessi si riferiscono ad una particolare finestra di osservazione studiata. e' bene notare che piu' e' grande la finestra di osservazione piu' il valore BER approssima la probabilita' di errore Pe.
+
+Nella prima sperimentazione si e' utilizzato il canale simmetrico binario su un flusso di $142.732$ bit. Partendo da $\alpha=10^{-1}$ si sono eseguite 10 trasmissioni dimezzando ogni volta tale parametro. Questa stessa simulazione si svolta sia con il canale $R3$ che con il canale $H(7,4)$. 
+
+I risultati ottenuti sono ben sintetizzati in Figura \ref{fig:mir1}. Come atteso, la codifica $R3$ e' molto piu' efficace di $H(7,4)$ per valori di $\alpha$ relativamente elevati $(>0.1)$. Si nota pero' per $\alpha<<1$ (Figura \ref{fig:gg2}) che la differenza fra il numero di errori dei due canali diminuisce sempre piu' velocemente fino a scomparire. Come ben noto in ambito teorico infatti il codice Hamming $(7,4)$ e' molto efficace quando il canale non e' molto rumoroso e gli errori sono isolati, dal momento che ha una capacita' correttiva pari a 1. In questi casi e' infatti preferibile a $R3$ dal momento che ha un fattore di ripetizione inferiore.
+
+\begin{figure}
+	\centering
+	\subfloat[][\emph{Numero Errori.}]
+	{\includegraphics[width=1\textwidth]{gg1} \label{fig:gg1}} \\
+	\subfloat[][\emph{Bit Error Rate.}]
+	{\includegraphics[width=1\textwidth]{gg2} \label{fig:gg2}} 
+	\caption{Errori di decodifica su modello di canale Simmetrico Binario.}
+	\label{fig:mir1}	
+\end{figure}
+
+Nella seconda sperimentazione si e' invece utilizzato un modello di Gilbert-Elliott sullo stesso flusso dell'esperimento precedente ($142.732$ bit). I parametri iniziali del modello sono stati settati come: $p_G=0.0001$, $p_B=0.1$, $p_{GG}=0.995$ e $p_{BB}=0.96$. Anche in questo caso per ogni codifica di canale si sono eseguite 10 trasmissioni con la differenza che ad ogni trasmissione il parametro che si dimezza e' $p_{BB}$. In questo modo si vuole rendere gli intervalli di burst sempre piu' stretti.
+Dai grafici ottenuti (Figura \ref{fig:mir2}) e' evidente la differenza con il caso precedente. La codifica $(7,4)$ e' molto piu' inefficace e imprevedibile di $R3$ nel caso di errori a burst dal momento che sono sufficienti 2 errori in 7 bit per far fallire la compressione.
+
+\begin{figure}
+	\centering
+	\subfloat[][\emph{Numero Errori.}]
+	{\includegraphics[width=1\textwidth]{gg3} \label{fig:gg3}} \\
+	\subfloat[][\emph{Bit Error Rate.}]
+	{\includegraphics[width=1\textwidth]{gg4} \label{fig:gg4}} 
+	\caption{Errori di decodifica su modello di canale Gilbert-Elliott.}
+	\label{fig:mir2}	
+\end{figure}
+
+
+\subsection{Codifica sorgente}
+La codifica di sorgente ha il compito di convertire il flusso in una rappresentazione piu' efficiente in modo da ridurre la mole di dati da trasmettere. In questa sezione si e' proceduto alla valutazione degli algoritmi LZW e LZMW descritti precedentemente.
+
+Sono stati performati diversi test di compressione usando entrambi gli algoritmi di codifica implementati su cinque diversi testi in lingua naturale (due in italiano e tre in inglese) codificati in ASCII. I risultati usando LZW sono mostrati nella Tabella \ref{tab:lzw} e quelli usando LZMW nella Tabella \ref{tab:lzmw}. Non possiamo apprezzare grandi differenze nelle due codifiche, infatti il rapporto di compressione viene molto simile su tutti i testi provati.
+
+\begin{sidewaystable}
+	\scriptsize
+	\begin{tabular}{|c|c|c|c|c|c|c|c|c|}
+		\hline
+		% after \\: \hline or \cline{col1-col2} \cline{col3-col4} ...
+		\textbf{Testo}  &  \textbf{Simboli input} &  \textbf{bit} &   \textbf{Dim. input (byte)} & \textbf{Simboli output} & \textbf{bit} &  \textbf{Dim. output (byte)} &  \textbf{Rapporto Compressione} & \textbf{Tempo end-to-end} \\
+		
+		\hline romeojuliet.txt & $142732$ & $8$ & $142732$ & $35305$ & $16$	& $70610$ & $50.52966399$ & $1.53$ \\
+		
+		\hline othello.txt & $155297$ & $8$ & $155297$ & $37350$ & $16$	& $74700$ & $51.89862006$ & $1.232$ \\
+		
+		\hline macbeth.txt & $103559$ & $8$ & $103559$ & $27009$ & $16$	& $54018$ & $47.83843027$ & $0.864$ \\
+		
+		\hline pirandsei.txt & $143139$ & $8$ & $143139$ & $34304$ & $16$	& $68608$ & $52.06896793$ & $1.023$ \\
+		
+		\hline dantepar.txt & $194767$ & $8$ & $194767$ & $43072$ & $16$	& $841014$ & $55.77074145$ & $1.481$ \\
+		
+		\hline		
+	\end{tabular}
+	\caption{Codifica di testi in lingua inglese e italiana con metodo di compressione LZW e codifica di canale a ripetizione (fattore ripetizione 5) con modello di errore isolato (modello di canale simmetrico binario $\alpha=10^-5$).}
+	\label{tab:lzw}
+
+\end{sidewaystable}
+
+\begin{sidewaystable}
+	\scriptsize
+	\begin{tabular}{|c|c|c|c|c|c|c|c|c|}
+		\hline
+		% after \\: \hline or \cline{col1-col2} \cline{col3-col4} ...
+		\textbf{Testo}  &  \textbf{Simboli input} &  \textbf{bit} &   \textbf{Dim. input (byte)} & \textbf{Simboli output} & \textbf{bit} &  \textbf{Dim. output (byte)} &  \textbf{Rapporto Compressione} & \textbf{Tempo end-to-end} \\
+		
+		\hline romeojuliet.txt & $142732$ & $8$ & $142732$ & $35176$ & $16$	& $70352$ & $50.71042233$ & $4.425$ \\
+		
+		\hline othello.txt & $155297$ & $8$ & $155297$ & $37220$ & $16$	& $74440$ & $52.06604120$ & $4.179$ \\
+		
+		\hline macbeth.txt & $103559$ & $8$ & $103559$ & $26907$ & $16$	& $53814$ & $48.03541942$ & $2.618$ \\
+		
+		\hline pirandsei.txt & $143139$ & $8$ & $143139$ & $33683$ & $16$	& $67366$ & $52.93665598$ & $3.592$ \\
+		
+		\hline dantepar.txt & $194767$ & $8$ & $194767$ & $44612$ & $16$	& $89224$ & $54.18936473$ & $6.727$ \\
+		
+		\hline		
+
+	\end{tabular}
+	\caption{Codifica di testi in lingua inglese e italiana con metodo di compressione LZMW e codifica di canale a ripetizione (fattore ripetizione 5) con modello di errore isolato (modello di canale simmetrico binario $\alpha=10^-5$).}
+	\label{tab:lzmw}
+	
+\end{sidewaystable}
+
+\cleardoublepage
+\begin{thebibliography}{9}
+	\bibitem{bookcompression}
+	Salomon, D. (2006), \emph{Data Compression: The Complete Reference}, Secaucus, NJ, Springer-Verlag New York, Inc.
+
+	\bibitem{lzw}
+	Welch, T. A. (1984), 
+	\emph{A Technique for High-Performance Data Compression}, IEEE Computer, 17(6):8-19, June.
+	
+	\bibitem{lzmw}
+	Miller, V. S., and M. N.Wegman (1985),
+	\emph{Variations On a Theme by Ziv and Lempel},
+	in A. Apostolico and Z. Galil, eds., NATO ASI series Vol. F12, Combinatorial Algorithms on Words, Berlin, Springer, pp. 131-140.
+	
+	\bibitem{gilbert}
+	 Gilbert, E. N. (1960), \emph{Capacity of a burst-noise channel}, Bell System Technical Journal, 39: 1253-1265
+	 
+	 \bibitem{elliott}
+	 Elliott, E. O. (1963), \emph{Estimates of error rates for codes on burst-noise channels}, Bell System Technical Journal, 42: 1977-1997
+	 
+	 \bibitem{GE}
+	 Fantacci, R. and Scardi, M. (1996), \emph{Performance Evaluation of Preemptive Polling Schemes and ARQ Techniques for Indoor Wireless Networks}, IEEE Trans. on Vehicular Technology, Vol. 45,No. 2, pp. 248-257.
+	 
+\end{thebibliography}
+
+
+\end{document}
